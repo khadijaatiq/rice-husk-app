@@ -1,0 +1,105 @@
+// schema.prisma — the persisted ledger (Postgres via Supabase, free tier).
+// Mirrors src/types.ts. Money is stored as integer paisa (BigInt), weight as
+// integer grams (BigInt) — never floats. Rows are soft-deleted (deletedAt) and
+// carry audit timestamps, so financial history is never silently erased.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Direction {
+  IN
+  OUT
+}
+
+enum EntryKind {
+  HUSK_PURCHASE // OUT, the "investment"
+  OPERATIONAL // OUT, money given to people / service charges
+  SALE // IN, husk sold
+  CAPITAL // IN, partner capital
+  CAPITAL_RETURN // OUT, capital returned to a partner
+}
+
+enum OutBucket {
+  HUSK_PURCHASE
+  PETTY_CASH
+  LABOUR
+  TRANSPORT
+  BROKER
+  MISC
+}
+
+enum Priority {
+  REQUIRED
+  EXTRA
+}
+
+enum PaymentSource {
+  ALFALAH
+  MEEZAN
+  CASH
+  OTHER
+}
+
+model Entry {
+  id            String         @id @default(cuid())
+  date          DateTime       @db.Date
+  direction     Direction
+  kind          EntryKind
+  // OUT rows:
+  bucket        OutBucket? // set for OUT
+  priority      Priority? // set for OUT (req 4)
+  // money + weight, integer minor units:
+  amount        BigInt? // paisa — used by OUT, CAPITAL, CAPITAL_RETURN
+  billed        BigInt? // paisa — SALE
+  received      BigInt? // paisa — SALE
+  weight        BigInt? // grams — HUSK_PURCHASE (bought) and SALE (sold)
+  // descriptive:
+  counterparty  String?
+  partner       String? // CAPITAL / CAPITAL_RETURN
+  paymentSource PaymentSource?
+  note          String?
+  // provenance + audit:
+  source        String         @default("MANUAL") // MANUAL | IMPORT
+  importBatchId String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime? // soft delete
+
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  @@index([date])
+  @@index([direction, kind])
+  @@index([deletedAt])
+}
+
+// One row per Excel upload, so an import can be reviewed and rolled back.
+model ImportBatch {
+  id          String    @id @default(cuid())
+  filename    String
+  sheetName   String
+  rowCount    Int
+  createdAt   DateTime  @default(now())
+  committedAt DateTime?
+  entries     Entry[]
+}
+
+// The single editable market rate (paisa per kg). History kept so old stock
+// valuations remain explainable.
+model RateSetting {
+  id             String   @id @default(cuid())
+  paisaPerKg     Int
+  effectiveFrom  DateTime @default(now())
+  note           String?
+}
+
+model AppUser {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+}
