@@ -113,3 +113,137 @@ export async function setCurrentRate(
 // Exported for repository tests — constructs a domain Entry from a plain object
 // without a DB call. This re-export keeps test/repository.test.ts DB-free.
 export { mapDbEntry, type DbRow } from "./entry-map";
+
+// ---- import batch -----------------------------------------------------------
+
+/** True if a committed ImportBatch already exists for this file hash. */
+export async function importHashExists(fileHash: string): Promise<boolean> {
+  const batch = await prisma.importBatch.findFirst({ where: { fileHash } });
+  return batch != null;
+}
+
+export interface BatchRow {
+  date: string; // ISO yyyy-mm-dd (empty string → use today as fallback)
+  rowType: "OUT" | "SALE" | "CAPITAL" | "CAPITAL_RETURN";
+  bucket?: OutBucket;
+  amount?: number; // paisa
+  billed?: number; // paisa
+  received?: number; // paisa
+  weight?: number; // grams
+  counterparty?: string;
+  partner?: string;
+  note?: string;
+}
+
+export async function commitImportBatch(opts: {
+  filename: string;
+  fileHash: string;
+  sheetNames: string;
+  rows: BatchRow[];
+  skipped: number;
+}): Promise<string> {
+  const { filename, fileHash, sheetNames, rows, skipped } = opts;
+
+  const batch = await prisma.importBatch.create({
+    data: { filename, fileHash, sheetNames, rowCount: rows.length, skipped },
+  });
+
+  const fallbackDate = new Date();
+
+  for (const r of rows) {
+    const date = r.date ? new Date(r.date) : fallbackDate;
+
+    if (r.rowType === "OUT") {
+      const kind = r.bucket === "HUSK_PURCHASE" ? "HUSK_PURCHASE" : "OPERATIONAL";
+      await prisma.entry.create({
+        data: {
+          date,
+          direction: "OUT",
+          kind,
+          bucket: r.bucket ?? null,
+          priority: null, // priority is set via bulk-tag after import
+          amount: r.amount != null ? BigInt(r.amount) : null,
+          weight: r.weight != null ? BigInt(r.weight) : null,
+          counterparty: r.counterparty ?? null,
+          note: r.note ?? null,
+          source: "IMPORT",
+          importBatchId: batch.id,
+        },
+      });
+    } else if (r.rowType === "SALE") {
+      await prisma.entry.create({
+        data: {
+          date,
+          direction: "IN",
+          kind: "SALE",
+          billed: r.billed != null ? BigInt(r.billed) : null,
+          received: r.received != null ? BigInt(r.received) : null,
+          weight: r.weight != null ? BigInt(r.weight) : null,
+          counterparty: r.counterparty ?? null,
+          note: r.note ?? null,
+          source: "IMPORT",
+          importBatchId: batch.id,
+        },
+      });
+    } else if (r.rowType === "CAPITAL") {
+      await prisma.entry.create({
+        data: {
+          date,
+          direction: "IN",
+          kind: "CAPITAL",
+          amount: r.amount != null ? BigInt(r.amount) : null,
+          partner: r.partner ?? null,
+          note: r.note ?? null,
+          source: "IMPORT",
+          importBatchId: batch.id,
+        },
+      });
+    } else if (r.rowType === "CAPITAL_RETURN") {
+      await prisma.entry.create({
+        data: {
+          date,
+          direction: "OUT",
+          kind: "CAPITAL_RETURN",
+          amount: r.amount != null ? BigInt(r.amount) : null,
+          partner: r.partner ?? null,
+          note: r.note ?? null,
+          source: "IMPORT",
+          importBatchId: batch.id,
+        },
+      });
+    }
+  }
+
+  return batch.id;
+}
+
+export async function getBatchWithEntries(batchId: string) {
+  return prisma.importBatch.findUnique({
+    where: { id: batchId },
+    include: { entries: { where: { deletedAt: null }, orderBy: { date: "asc" } } },
+  });
+}
+
+export async function rollbackBatch(batchId: string): Promise<void> {
+  await prisma.entry.updateMany({
+    where: { importBatchId: batchId, deletedAt: null },
+    data: { deletedAt: new Date() },
+  });
+}
+
+export async function bulkSetPriority(
+  batchId: string,
+  priority: Priority,
+  filter: { bucket?: OutBucket; counterparty?: string } = {}
+): Promise<number> {
+  const where: Prisma.EntryWhereInput = {
+    importBatchId: batchId,
+    deletedAt: null,
+    direction: "OUT",
+  };
+  if (filter.bucket) where.bucket = filter.bucket;
+  if (filter.counterparty) where.counterparty = filter.counterparty;
+
+  const result = await prisma.entry.updateMany({ where, data: { priority } });
+  return result.count;
+}

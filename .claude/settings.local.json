@@ -2,7 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Skill(run)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 30 | Select-Object StatusCode, @{N=\"Body\";E={$_.Content.Substring\\(0,[Math]::Min\\(300,$_.Content.Length\\)\\)}})",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 30; $r.StatusCode; $r.Content.Substring\\(0, [Math]::Min\\(500, $r.Content.Length\\)\\))",
+      "Skill(claude-in-chrome)",
+      "Bash(npx prisma *)",
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "PowerShell(Start-Process -FilePath \"cmd.exe\" -ArgumentList \"/c\", \"cd `\"C:\\\\Users\\\\user\\\\OneDrive\\\\Attachments\\\\Documents.cancelled\\\\rice husk app`\" && npm run dev\" -WindowStyle Hidden; Start-Sleep -Seconds 12; try { \\(Invoke-WebRequest -Uri \"http://localhost:3000/import\" -UseBasicParsing -TimeoutSec 10\\).StatusCode } catch { \"server not ready\" })",
+      "PowerShell(Start-Process -FilePath \"cmd.exe\" -ArgumentList \"/c\", \"cd `\"C:\\\\Users\\\\user\\\\OneDrive\\\\Attachments\\\\Documents.cancelled\\\\rice husk app`\" && npm run dev\" -WindowStyle Hidden; Start-Sleep -Seconds 12; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 10; \"HTTP $\\($r.StatusCode\\)\" } catch { \"not ready: $_\" })",
+      "PowerShell(Start-Sleep -Seconds 10; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 10; \"HTTP $\\($r.StatusCode\\)\" } catch { \"not ready: $_\" })",
+      "Bash(node -e ' *)",
+      "Read(//c/Users/user/**)",
+      "Read(//c/Users/user/OneDrive/**)",
+      "Bash(node --loader ts-node/esm -e ' *)"
     ]
   }
 }

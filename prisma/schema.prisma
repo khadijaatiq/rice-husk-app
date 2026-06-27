@@ -79,13 +79,16 @@ model Entry {
 
 // One row per Excel upload, so an import can be reviewed and rolled back.
 model ImportBatch {
-  id          String    @id @default(cuid())
-  filename    String
-  sheetName   String
-  rowCount    Int
-  createdAt   DateTime  @default(now())
-  committedAt DateTime?
-  entries     Entry[]
+  id         String   @id @default(cuid())
+  filename   String
+  fileHash   String?  // SHA-256 of file bytes; checked on commit to block re-import
+  sheetNames String   // comma-separated sheets parsed (e.g. "Rice Husk,partnership")
+  rowCount   Int
+  skipped    Int      @default(0) // rows with hard parse errors, excluded from import
+  createdAt  DateTime @default(now())
+  entries    Entry[]
+
+  @@index([fileHash])
 }
 
 // The single editable market rate (paisa per kg). History kept so old stock
