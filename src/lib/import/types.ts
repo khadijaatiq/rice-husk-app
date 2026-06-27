@@ -29,6 +29,8 @@ export interface ParsedImport {
   rows: PreviewRow[];
   alreadyImported: boolean; // true = a committed batch with this hash exists
   summary: ImportSummary;
+  /** Authoritative stock balance in kg, read from col 18 of the Rice Husk sheet. */
+  stockBalanceKg?: number | null;
 }
 
 export interface ImportSummary {

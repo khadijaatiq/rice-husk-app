@@ -20,7 +20,7 @@ describe("parseRiceHuskSheet", () => {
       ["Date", "Name", "Total", "Petty Cash", "Labour", "Transport", "Husk Purchase"],
       ["15/03/25", "Supplier A", 50000, null, null, null, 50000],
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(1);
     const r = rows[0];
     expect(r.rowType).toBe("OUT");
@@ -36,7 +36,7 @@ describe("parseRiceHuskSheet", () => {
       ["Date", "Name", "Total", "Petty Cash", "Labour", "Transport", "Husk"],
       ["20/06/25", "Worker Group", 10000, null, 10000, null, null],
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(1);
     expect(rows[0].bucket).toBe("LABOUR");
     expect(rows[0].amount).toBe(10000 * 100);
@@ -47,7 +47,7 @@ describe("parseRiceHuskSheet", () => {
       ["Date", "Name", "Total", "Petty Cash", "Labour", "Transport", "Husk"],
       ["01/04/25", "Mixed", 30000, 10000, 20000, null, null],
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(2);
     const buckets = rows.map((r) => r.bucket).sort();
     expect(buckets).toEqual(["LABOUR", "PETTY_CASH"]);
@@ -58,7 +58,7 @@ describe("parseRiceHuskSheet", () => {
       ["Date", "Name", "Total", "Petty Cash", "Labour", "Transport", "Husk"],
       ["01/04/25", "Empty row", 0, null, null, null, null],
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(0);
   });
 
@@ -68,16 +68,18 @@ describe("parseRiceHuskSheet", () => {
       ["15/03/25", "Supplier", 50000, null, null, null, 50000],
       ["Total", "", 50000, null, null, null, 50000], // header total row
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(1); // total row skipped
   });
 
-  it("returns [] when sheet has no detectable header", () => {
+  it("returns empty rows when sheet has no detectable header", () => {
     const ws = makeWs([
       [null, null, null],
       [null, null, null],
     ]);
-    expect(parseRiceHuskSheet(ws)).toHaveLength(0);
+    const { rows, stockBalanceKg } = parseRiceHuskSheet(ws);
+    expect(rows).toHaveLength(0);
+    expect(stockBalanceKg).toBeNull();
   });
 
   it("handles Excel serial dates", () => {
@@ -85,7 +87,7 @@ describe("parseRiceHuskSheet", () => {
       ["Date", "Name", "Petty Cash"],
       [45669, "Test", 5000], // serial 45669 = 2025-01-12
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(1);
     expect(rows[0].date).toBe("2025-01-12");
   });
@@ -95,10 +97,24 @@ describe("parseRiceHuskSheet", () => {
       ["Date", "Name", "Labour"],
       ["05/03/25", "Someone", 1000], // day=5, month=3, both ≤ 12 → ambiguous
     ]);
-    const rows = parseRiceHuskSheet(ws);
+    const { rows } = parseRiceHuskSheet(ws);
     expect(rows).toHaveLength(1);
     expect(rows[0].dateAmbiguous).toBe(true);
     expect(rows[0].errors).toHaveLength(0); // ambiguous ≠ hard error
+  });
+
+  it("reads the running stock balance from col 18", () => {
+    // Col 18 = index 18; checkpoint row carries the balance in kg
+    const dataRow = new Array(19).fill(null);
+    dataRow[0] = "15/03/25"; // date
+    dataRow[3] = 5000;       // petty cash
+    dataRow[18] = 291150;    // stock balance kg
+    const ws = makeWs([
+      ["Date", "Name", "Total", "Petty Cash", "Labour", "Transport", "Husk"],
+      dataRow,
+    ]);
+    const { stockBalanceKg } = parseRiceHuskSheet(ws);
+    expect(stockBalanceKg).toBe(291150);
   });
 });
 

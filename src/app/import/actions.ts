@@ -48,11 +48,13 @@ export async function parseFileAction(formData: FormData): Promise<ParsedImport 
 
   const ignored = sheetNames.filter((n) => IGNORED_SHEETS.has(n));
   const rows: PreviewRow[] = [];
+  let stockBalanceKg: number | null = null;
 
   if (hasRiceHusk) {
     const ws = wb.Sheets[RICE_HUSK_SHEET];
-    const parsed = parseRiceHuskSheet(ws);
-    rows.push(...parsed.map(validateRow));
+    const { rows: riceHuskRows, stockBalanceKg: balance } = parseRiceHuskSheet(ws);
+    rows.push(...riceHuskRows.map(validateRow));
+    stockBalanceKg = balance;
   }
 
   if (hasPartnership) {
@@ -71,6 +73,7 @@ export async function parseFileAction(formData: FormData): Promise<ParsedImport 
     rows,
     alreadyImported,
     summary: buildSummary(rows),
+    stockBalanceKg,
   };
 }
 

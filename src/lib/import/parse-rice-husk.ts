@@ -1,34 +1,32 @@
 /**
  * Parser for the "Rice Husk" sheet — the source of truth for expense rows.
  *
- * Sheet layout (per CLAUDE.md): D+E+F+G = C.
- *   Col G → HUSK_PURCHASE  (the investment)
- *   Col D → PETTY_CASH
- *   Col E → LABOUR
- *   Col F → TRANSPORT
- *   (BROKER / MISC added if their headers appear in the file)
+ * Sheet layout (per raw dump of the real file):
+ *   col 0  = Date
+ *   col 1  = Description   (captured as `note`)
+ *   col 2  = Amount total  (ignored — we sum bucket columns directly)
+ *   col 3  = PETTY_CASH    (header: "petty cash")
+ *   col 4  = LABOUR        (header: "labour")
+ *   col 5  = TRANSPORT     (null header — hardcoded positional)
+ *   col 6  = HUSK_PURCHASE (null header — hardcoded positional)
+ *   col 18 = running stock balance in kg (checkpoint rows only;
+ *            last non-null value is the authoritative stock figure)
  *
- * Strategy: detect header row, map columns by keyword, then read data rows.
- * Each data row produces one PreviewRow per non-zero bucket column found.
- * Rows with no date or all-zero amounts are skipped silently.
- *
- * Null-header fallback: the actual file has null headers for TRANSPORT (col F)
- * and HUSK_PURCHASE (col G). After keyword detection, if those buckets are
- * still missing we scan forward from the last detected bucket column and assign
- * the first two null-header columns positionally (TRANSPORT first, then
- * HUSK_PURCHASE) — matching the sheet's D/E/F/G column order.
+ * Per-row weight does NOT exist in this sheet. The HUSK_PURCHASE entries are
+ * imported without a weight field. The overall stock balance is read from col 18
+ * and returned alongside the rows so the caller can store it separately.
  */
 
 import * as XLSX from "xlsx";
 import type { OutBucket } from "../types";
-import { rupeesToPaisa, kgToGrams, mundToGrams } from "../money";
+import { rupeesToPaisa } from "../money";
 import type { PreviewRow } from "./types";
 import { normaliseDate } from "./date-normalise";
 
 type CellVal = string | number | boolean | Date | null | undefined;
 type RawRow = CellVal[];
 
-// Keywords that map a column header to a bucket
+// Keywords that map a column header to a bucket (for named columns)
 const BUCKET_PATTERNS: Array<{ bucket: OutBucket; re: RegExp }> = [
   { bucket: "HUSK_PURCHASE", re: /husk|bhoosa?|bhusa?|purchase|investment/i },
   { bucket: "PETTY_CASH", re: /petty|p\.?\s*cash/i },
@@ -40,13 +38,17 @@ const BUCKET_PATTERNS: Array<{ bucket: OutBucket; re: RegExp }> = [
 
 const DATE_COL_RE = /^(date|dt|تاریخ|tarikh)$/i;
 const NAME_COL_RE = /name|party|counterparty|paid\s*to|vendor|to\b|person|detail/i;
-const WEIGHT_COL_RE = /\bkg\b|weight|mund|mnd|quantity|qty/i;
 const NOTE_COL_RE = /note|remark|comment|desc/i;
+
+// Confirmed positions for the two null-header bucket columns in the real file.
+const TRANSPORT_COL = 5;
+const HUSK_PURCHASE_COL = 6;
+// Running stock balance (kg on hand); last non-null value in this column is authoritative.
+const STOCK_BALANCE_COL = 18;
 
 interface ColMap {
   dateIdx: number;
   nameIdx: number | null;
-  weightIdx: number | null;
   noteIdx: number | null;
   buckets: Array<{ idx: number; bucket: OutBucket }>;
 }
@@ -61,7 +63,6 @@ function headerStr(val: CellVal): string {
 function detectColumns(row: RawRow): ColMap | null {
   let dateIdx = -1;
   let nameIdx: number | null = null;
-  let weightIdx: number | null = null;
   let noteIdx: number | null = null;
   const buckets: Array<{ idx: number; bucket: OutBucket }> = [];
 
@@ -71,8 +72,6 @@ function detectColumns(row: RawRow): ColMap | null {
 
     if (DATE_COL_RE.test(h)) {
       dateIdx = i;
-    } else if (WEIGHT_COL_RE.test(h)) {
-      weightIdx = i;
     } else if (NOTE_COL_RE.test(h)) {
       noteIdx = i;
     } else if (NAME_COL_RE.test(h)) {
@@ -87,29 +86,17 @@ function detectColumns(row: RawRow): ColMap | null {
     }
   }
 
-  // Null-header fallback: the real file has null headers for TRANSPORT and
-  // HUSK_PURCHASE (columns F and G). Scan forward from the last named bucket
-  // column and assign the first two null-header columns positionally.
-  const missingBuckets: OutBucket[] = [];
-  if (!buckets.find((b) => b.bucket === "TRANSPORT")) missingBuckets.push("TRANSPORT");
-  if (!buckets.find((b) => b.bucket === "HUSK_PURCHASE")) missingBuckets.push("HUSK_PURCHASE");
-
-  if (missingBuckets.length > 0 && buckets.length > 0) {
-    const lastNamedIdx = Math.max(...buckets.map((b) => b.idx));
-    let assigned = 0;
-    for (let i = lastNamedIdx + 1; i < row.length && assigned < missingBuckets.length; i++) {
-      const h = headerStr(row[i]);
-      if (!h) {
-        buckets.push({ idx: i, bucket: missingBuckets[assigned++] });
-      } else {
-        // Non-null header signals end of expense columns (e.g. "sales", "balance")
-        break;
-      }
-    }
+  // Positional fallback for the two null-header columns confirmed in the real file.
+  // Keyword detection takes priority; these only fire when a column wasn't already found.
+  if (!buckets.find((b) => b.bucket === "TRANSPORT")) {
+    buckets.push({ idx: TRANSPORT_COL, bucket: "TRANSPORT" });
+  }
+  if (!buckets.find((b) => b.bucket === "HUSK_PURCHASE")) {
+    buckets.push({ idx: HUSK_PURCHASE_COL, bucket: "HUSK_PURCHASE" });
   }
 
   if (dateIdx === -1 || buckets.length === 0) return null;
-  return { dateIdx, nameIdx, weightIdx, noteIdx, buckets };
+  return { dateIdx, nameIdx, noteIdx, buckets };
 }
 
 function cellNum(val: CellVal): number | null {
@@ -127,7 +114,16 @@ function cellStr(val: CellVal): string | undefined {
   return s || undefined;
 }
 
-export function parseRiceHuskSheet(ws: XLSX.WorkSheet): PreviewRow[] {
+export interface RiceHuskParseResult {
+  rows: PreviewRow[];
+  /**
+   * Last non-null value from col 18 (the sheet's running stock balance, in kg).
+   * This is the authoritative stock figure — null only if col 18 was entirely empty.
+   */
+  stockBalanceKg: number | null;
+}
+
+export function parseRiceHuskSheet(ws: XLSX.WorkSheet): RiceHuskParseResult {
   // raw:true gives numeric serials for date cells and actual numbers for amounts.
   const rawNums: RawRow[] = XLSX.utils.sheet_to_json(ws, {
     header: 1,
@@ -135,7 +131,7 @@ export function parseRiceHuskSheet(ws: XLSX.WorkSheet): PreviewRow[] {
     raw: true,
   });
 
-  // Find the header row (first row with ≥ 2 non-empty string cells)
+  // Find the header row (first row with a detectable Date column)
   let colMap: ColMap | null = null;
   let dataStart = 0;
 
@@ -148,21 +144,33 @@ export function parseRiceHuskSheet(ws: XLSX.WorkSheet): PreviewRow[] {
     }
   }
 
-  if (!colMap) return []; // sheet layout unrecognised
+  if (!colMap) return { rows: [], stockBalanceKg: null };
 
   const rows: PreviewRow[] = [];
+  let stockBalanceKg: number | null = null;
 
   for (let ri = dataStart; ri < rawNums.length; ri++) {
     const row = rawNums[ri];
     if (!row || row.every((c) => c == null || c === "")) continue;
 
-    // Date — use raw (numeric) row for serial detection
+    // Track the running stock balance — last non-null value is authoritative
+    const balanceCell = cellNum(row[STOCK_BALANCE_COL]);
+    if (balanceCell != null && balanceCell > 0) stockBalanceKg = balanceCell;
+
+    // Skip subtotal / summary rows: col 2 (Amount) == col 6 (HUSK_PURCHASE) and
+    // the value is large. Individual transactions are never > Rs 1,000,000 each;
+    // only section sub-totals reach that magnitude.
+    const colC = cellNum(row[2]);
+    const colG = cellNum(row[HUSK_PURCHASE_COL]);
+    if (colC != null && colC === colG && colC > 1_000_000) continue;
+
+    // Date — required; skip rows with no date value
     const rawDateCell = row[colMap.dateIdx];
     if (rawDateCell == null || rawDateCell === "") continue;
 
     const dr = normaliseDate(rawDateCell);
 
-    // Check if this is a "Total" / summary row (non-numeric date cell that's text)
+    // Skip total/summary rows (non-numeric date cell containing "total" etc.)
     if (typeof rawDateCell === "string") {
       const lower = rawDateCell.trim().toLowerCase();
       if (/total|sum|grand|subtotal/.test(lower)) continue;
@@ -170,7 +178,6 @@ export function parseRiceHuskSheet(ws: XLSX.WorkSheet): PreviewRow[] {
 
     const counterparty = colMap.nameIdx != null ? cellStr(row[colMap.nameIdx]) : undefined;
     const note = colMap.noteIdx != null ? cellStr(row[colMap.noteIdx]) : undefined;
-    const weightRaw = colMap.weightIdx != null ? cellNum(row[colMap.weightIdx]) : null;
 
     // Produce one PreviewRow per non-zero bucket column
     for (const { idx, bucket } of colMap.buckets) {
@@ -178,29 +185,8 @@ export function parseRiceHuskSheet(ws: XLSX.WorkSheet): PreviewRow[] {
       if (!amountRupees || amountRupees <= 0) continue;
 
       const errors: string[] = [];
-      const warnings: string[] = [];
 
       if (dr.parseError) errors.push(`date: ${dr.flag}`);
-      if (amountRupees <= 0) errors.push("amount must be positive");
-
-      // Weight is only meaningful for HUSK_PURCHASE
-      let weight: number | undefined;
-      if (bucket === "HUSK_PURCHASE") {
-        if (weightRaw != null && weightRaw > 0) {
-          // Header-detected weight column — treat value as kg
-          weight = kgToGrams(weightRaw);
-        } else {
-          // Column P (index 15) holds mund values in the real file; no header present
-          const mundRaw = cellNum(row[15]);
-          if (mundRaw != null && mundRaw > 0) {
-            weight = mundToGrams(mundRaw);
-          }
-        }
-      }
-
-      if (bucket === "HUSK_PURCHASE" && !weight) {
-        warnings.push("no weight (mund/kg) for HUSK_PURCHASE row — stock tracking will be incomplete");
-      }
 
       rows.push({
         rowNum: ri + 1,
@@ -212,14 +198,14 @@ export function parseRiceHuskSheet(ws: XLSX.WorkSheet): PreviewRow[] {
         rowType: "OUT",
         bucket,
         amount: rupeesToPaisa(amountRupees),
-        weight,
+        // No per-row weight: the Rice Husk sheet tracks only a running balance (col 18).
         counterparty,
         note,
         errors,
-        warnings,
+        warnings: [],
       });
     }
   }
 
-  return rows;
+  return { rows, stockBalanceKg };
 }
