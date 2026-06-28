@@ -33,6 +33,7 @@ export default function RootLayout({
           <span className="text-sm font-semibold text-gray-900">Rice Husk Ledger</span>
           <Link href="/" className="text-sm text-gray-600 hover:text-gray-900">Dashboard</Link>
           <Link href="/import" className="text-sm text-gray-600 hover:text-gray-900">Import</Link>
+          <Link href="/reports" className="text-sm text-gray-600 hover:text-gray-900">Reports</Link>
         </nav>
         {children}
       </body>

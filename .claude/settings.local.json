@@ -18,7 +18,9 @@
       "Read(//c/Users/user/**)",
       "Read(//c/Users/user/OneDrive/**)",
       "Bash(node --loader ts-node/esm -e ' *)",
-      "Bash(node partnership-import.cjs)"
+      "Bash(node partnership-import.cjs)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('next:', p.dependencies.next\\)\")",
+      "Bash(npx tsc *)"
     ]
   }
 }
