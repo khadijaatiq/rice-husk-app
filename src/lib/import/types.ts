@@ -46,4 +46,7 @@ export interface CommitPayload {
   fileHash: string;
   filename: string;
   rows: PreviewRow[];
+  /** Authoritative kg purchased, from col 18 of Rice Husk sheet. Committed as a
+   *  zero-amount HUSK_PURCHASE entry so summarize() can count stock correctly. */
+  stockBalanceKg?: number | null;
 }

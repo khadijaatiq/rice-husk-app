@@ -52,6 +52,7 @@ export function ImportWizard() {
         fileHash: preview.fileHash,
         filename: preview.filename,
         rows: preview.rows,
+        stockBalanceKg: preview.stockBalanceKg,
       });
 
       if ("error" in result) {

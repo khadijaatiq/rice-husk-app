@@ -157,12 +157,24 @@ export function parseRiceHuskSheet(ws: XLSX.WorkSheet): RiceHuskParseResult {
     const balanceCell = cellNum(row[STOCK_BALANCE_COL]);
     if (balanceCell != null && balanceCell > 0) stockBalanceKg = balanceCell;
 
-    // Skip subtotal / summary rows: col 2 (Amount) == col 6 (HUSK_PURCHASE) and
-    // the value is large. Individual transactions are never > Rs 1,000,000 each;
-    // only section sub-totals reach that magnitude.
+    // Re-detect column headers when a new section starts.
+    // Trigger: the date column contains the literal text "Date" (matching DATE_COL_RE)
+    // instead of an actual date value — identical to the row 1 header structure.
+    // This lets the parser handle multi-section sheets where columns may shift.
+    const dateColRaw = row[colMap.dateIdx];
+    if (typeof dateColRaw === "string" && DATE_COL_RE.test(dateColRaw.trim())) {
+      const newMap = detectColumns(row);
+      if (newMap) colMap = newMap;
+      continue;
+    }
+
+    // Skip subtotal / summary rows: col 2 (Amount total) equals the HUSK_PURCHASE
+    // bucket column and the value is large. Individual transactions are never
+    // > Rs 1,000,000; only section sub-totals reach that magnitude.
     const colC = cellNum(row[2]);
-    const colG = cellNum(row[HUSK_PURCHASE_COL]);
-    if (colC != null && colC === colG && colC > 1_000_000) continue;
+    const huskBucket = colMap.buckets.find((b) => b.bucket === "HUSK_PURCHASE");
+    const colG = huskBucket != null ? cellNum(row[huskBucket.idx]) : null;
+    if (colC != null && colG != null && colC === colG && colC > 1_000_000) continue;
 
     // Date — required; skip rows with no date value
     const rawDateCell = row[colMap.dateIdx];

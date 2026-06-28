@@ -101,23 +101,39 @@ export async function commitImportAction(
     .filter(Boolean)
     .join(",");
 
+  const batchRows: repo.BatchRow[] = validRows.map((r) => ({
+    date: r.date,
+    rowType: r.rowType,
+    bucket: r.bucket,
+    amount: r.amount,
+    billed: r.billed,
+    received: r.received,
+    weight: r.weight,
+    counterparty: r.counterparty,
+    partner: r.partner,
+    note: r.note,
+  }));
+
+  // If the Rice Husk sheet provided an authoritative stock balance from col 18,
+  // commit it as a zero-amount HUSK_PURCHASE entry so summarize() can count
+  // kgPurchased without needing a per-row weight column (which doesn't exist).
+  if (payload.stockBalanceKg != null && payload.stockBalanceKg > 0) {
+    batchRows.push({
+      date: new Date().toISOString().split("T")[0],
+      rowType: "OUT",
+      bucket: "HUSK_PURCHASE",
+      amount: 0,
+      weight: Math.round(payload.stockBalanceKg * 1000),
+      note: "stock-balance-from-col18",
+    });
+  }
+
   try {
     const batchId = await repo.commitImportBatch({
       filename: payload.filename,
       fileHash: payload.fileHash,
       sheetNames: parsedSheets,
-      rows: validRows.map((r) => ({
-        date: r.date,
-        rowType: r.rowType,
-        bucket: r.bucket,
-        amount: r.amount,
-        billed: r.billed,
-        received: r.received,
-        weight: r.weight,
-        counterparty: r.counterparty,
-        partner: r.partner,
-        note: r.note,
-      })),
+      rows: batchRows,
       skipped,
     });
 

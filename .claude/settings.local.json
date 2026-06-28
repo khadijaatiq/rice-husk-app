@@ -17,7 +17,8 @@
       "Bash(node -e ' *)",
       "Read(//c/Users/user/**)",
       "Read(//c/Users/user/OneDrive/**)",
-      "Bash(node --loader ts-node/esm -e ' *)"
+      "Bash(node --loader ts-node/esm -e ' *)",
+      "Bash(node partnership-import.cjs)"
     ]
   }
 }
